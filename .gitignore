@@ -6,7 +6,5 @@
 __pycache__/
 *.py[cod]
 
-# Pipeline runtime artifacts
-output/**/*.zip
-output/**/*.log
-output/**/*.json
+# Pipeline output (sensitive data)
+output/
