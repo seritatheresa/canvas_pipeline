@@ -16,6 +16,7 @@ Usage:
 """
 
 import io
+import json
 import logging
 import time
 import zipfile
@@ -51,6 +52,24 @@ class CanvasSISImporter:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    # ── Term lookup ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _canvas_term_id(term_code: str) -> str:
+        """Return the Canvas numeric term id for a given banner term code."""
+        terms_path = Path(config.OUTPUT_DIR) / "canvas_terms.json"
+        with open(terms_path, encoding="utf-8") as fh:
+            terms = json.load(fh)
+        for term in terms:
+            if term.get("sis_term_id") == str(term_code):
+                return str(term["id"])
+        raise ValueError(
+            f"No Canvas term found for banner term code '{term_code}' "
+            f"in {terms_path}"
+        )
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
     def run(
         self,
         csv_files: dict[str, Path],
@@ -69,12 +88,19 @@ class CanvasSISImporter:
             The final Canvas SIS import object (dict) or a dry-run summary.
         """
         zip_path = self._build_zip(csv_files, term_code)
+        canvas_term_id = self._canvas_term_id(term_code)
+        logger.info("Resolved banner term %s → Canvas term id %s", term_code, canvas_term_id)
 
         if dry_run:
             logger.info("[DRY RUN] Would upload %s to Canvas — skipping.", zip_path)
-            return {"dry_run": True, "zip": str(zip_path), "csv_files": list(csv_files.keys())}
+            return {
+                "dry_run": True,
+                "zip": str(zip_path),
+                "csv_files": list(csv_files.keys()),
+                "batch_mode_term_id": canvas_term_id,
+            }
 
-        import_id = self._submit(zip_path)
+        import_id = self._submit(zip_path, canvas_term_id)
         result = self._poll(import_id)
         self._log_result(result)
         return result
@@ -97,7 +123,7 @@ class CanvasSISImporter:
 
     # ── Upload ────────────────────────────────────────────────────────────────
 
-    def _submit(self, zip_path: Path) -> str:
+    def _submit(self, zip_path: Path, canvas_term_id: str) -> str:
         """POST the ZIP to Canvas and return the import ID."""
         url = f"{self._base}/api/v1/accounts/{self._account}/sis_imports"
 
@@ -106,7 +132,11 @@ class CanvasSISImporter:
             response = self._session.post(
                 url,
                 files={"attachment": (zip_path.name, f, "application/zip")},
-                data={"import_type": "instructure_csv"},
+                data={
+                    "import_type": "instructure_csv",
+                    "batch_mode": "true",
+                    "batch_mode_term_id": canvas_term_id,
+                },
                 timeout=120,
             )
 
