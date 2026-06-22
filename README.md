@@ -131,6 +131,22 @@ python pipeline.py --term 202710 --dry-run
 python pipeline.py --term 202710 --skip-upload
 ```
 
+### Enrollment invitation workflow (Canvas API)
+
+```powershell
+# List enrollments for a course section
+python canvas_enrollments.py list --course-id 10284 --section-id 10721
+
+# Accept an invitation for one enrollment (Canvas endpoint uses POST)
+python canvas_enrollments.py accept --course-id 10284 --enrollment-id 184579
+
+# Optional: force PUT if you need to test method behavior in your environment
+python canvas_enrollments.py accept --course-id 10284 --enrollment-id 184579 --method PUT
+```
+
+The list command writes JSON output to `output/course_<course_id>_section_<section_id>_enrollments.json`
+(or `output/course_<course_id>_enrollments.json` when no section is given).
+
 ### Exit codes
 
 | Code | Meaning |
@@ -152,6 +168,7 @@ canvas_pipeline/
 ├── canvas_terms.py      # Fetch active Canvas enrollment terms → canvas_terms.json
 ├── canvas_courses.py    # Fetch existing Canvas courses for a term → canvas_courses_<term>.json
 ├── canvas_users.py      # Fetch existing Canvas users → canvas_users.json
+├── canvas_enrollments.py # List enrollments and accept invitation endpoints
 ├── config.py            # Central config loader (reads .env)
 ├── requirements.txt     # Python dependencies
 ├── queries/
