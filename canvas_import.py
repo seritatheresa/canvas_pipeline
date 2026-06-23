@@ -89,7 +89,9 @@ class CanvasSISImporter:
         """
         zip_path = self._build_zip(csv_files, term_code)
         canvas_term_id = self._canvas_term_id(term_code)
+        use_batch_mode = self._should_use_batch_mode(csv_files)
         logger.info("Resolved banner term %s → Canvas term id %s", term_code, canvas_term_id)
+        logger.info("Upload mode: %s", "batch" if use_batch_mode else "standard")
 
         if dry_run:
             logger.info("[DRY RUN] Would upload %s to Canvas — skipping.", zip_path)
@@ -97,13 +99,24 @@ class CanvasSISImporter:
                 "dry_run": True,
                 "zip": str(zip_path),
                 "csv_files": list(csv_files.keys()),
-                "batch_mode_term_id": canvas_term_id,
+                "batch_mode": use_batch_mode,
+                "batch_mode_term_id": canvas_term_id if use_batch_mode else None,
             }
 
-        import_id = self._submit(zip_path, canvas_term_id)
+        import_id = self._submit(zip_path, canvas_term_id, use_batch_mode)
         result = self._poll(import_id)
         self._log_result(result)
         return result
+
+    @staticmethod
+    def _should_use_batch_mode(csv_files: dict[str, Path]) -> bool:
+        """
+        Use Canvas batch mode only when course and section CSVs were skipped.
+
+        In this pipeline, missing courses.csv / sections.csv means those
+        DataFrames were empty and intentionally not written.
+        """
+        return "courses.csv" not in csv_files and "sections.csv" not in csv_files
 
     # ── ZIP builder ───────────────────────────────────────────────────────────
 
@@ -123,20 +136,25 @@ class CanvasSISImporter:
 
     # ── Upload ────────────────────────────────────────────────────────────────
 
-    def _submit(self, zip_path: Path, canvas_term_id: str) -> str:
+    def _submit(self, zip_path: Path, canvas_term_id: str, use_batch_mode: bool) -> str:
         """POST the ZIP to Canvas and return the import ID."""
         url = f"{self._base}/api/v1/accounts/{self._account}/sis_imports"
+
+        payload = {
+            "import_type": "instructure_csv",
+        }
+        if use_batch_mode:
+            payload.update({
+                "batch_mode": "true",
+                "batch_mode_term_id": canvas_term_id,
+            })
 
         logger.info("Submitting SIS import to %s …", url)
         with open(zip_path, "rb") as f:
             response = self._session.post(
                 url,
                 files={"attachment": (zip_path.name, f, "application/zip")},
-                data={
-                    "import_type": "instructure_csv",
-                    "batch_mode": "true",
-                    "batch_mode_term_id": canvas_term_id,
-                },
+                data=payload,
                 timeout=120,
             )
 

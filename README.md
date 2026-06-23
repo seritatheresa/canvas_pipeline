@@ -31,6 +31,8 @@ output/canvas_*.json
    - `courses.csv` — skips courses whose SIS course ID is already in `canvas_courses_<term>.json`
    - `sections.csv` — sections for new courses only (mirrors `courses.csv` filtering)
    - `enrollments.csv` — all enrollments for the term
+      - Upload mode safety: batch mode is used only when both `courses.csv` and `sections.csv`
+        are skipped because their DataFrames are empty; otherwise a standard SIS import is used.
 5. Zips the CSVs and POSTs them to the Canvas SIS Import API.
 6. Polls Canvas until the import reaches a terminal state and logs the outcome.
 7. Writes a timestamped log to `./output/<term>/pipeline_<timestamp>.log`.
