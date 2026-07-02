@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+import pandas as pd
 
 import config
 
@@ -38,7 +39,7 @@ def _fetch_enrollments(
     course_id: int,
     section_id: int | None = None,
     per_page: int = 100,
-) -> list[dict[str, Any]]:
+) -> pd.DataFrame:
     url = f"{config.CANVAS_URL}/api/v1/courses/{course_id}/enrollments"
     params: dict[str, Any] = {
         "per_page": per_page,
@@ -58,16 +59,21 @@ def _fetch_enrollments(
         # Canvas next links already include pagination params.
         params = {}
 
-    if section_id is not None:
-        all_rows = [e for e in all_rows if int(e.get("course_section_id", -1)) == section_id]
+    df = pd.json_normalize(all_rows, sep=".")
+    if not df.empty:
+        df.rename(columns={"id": "enrollment_id", "user.name": "user_name"}, inplace=True)
 
-    return all_rows
+    if section_id is not None and not df.empty:
+        section_values = pd.to_numeric(df.get("course_section_id"), errors="coerce")
+        df = df[section_values == section_id]
+
+    return df.reset_index(drop=True)
 
 
-def _save_json(data: list[dict[str, Any]], path: Path) -> None:
+def _save_json(data: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data.to_dict(orient="records"), f, indent=2, default=str)
 
 
 def _accept_invitation(
@@ -92,7 +98,7 @@ def _accept_invitation(
 
 def _cmd_list(args: argparse.Namespace) -> int:
     session = _session()
-    enrollments = _fetch_enrollments(
+    enrollments_df = _fetch_enrollments(
         session=session,
         course_id=args.course_id,
         section_id=args.section_id,
@@ -101,7 +107,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
     logger.info(
         "Found %d enrollments in course %s%s",
-        len(enrollments),
+        len(enrollments_df),
         args.course_id,
         f" section {args.section_id}" if args.section_id else "",
     )
@@ -114,25 +120,27 @@ def _cmd_list(args: argparse.Namespace) -> int:
         else:
             out_path = Path(config.OUTPUT_DIR) / f"course_{args.course_id}_enrollments.json"
 
-    _save_json(enrollments, out_path)
+    _save_json(enrollments_df, out_path)
     logger.info("Saved enrollments JSON to %s", out_path)
 
     # Print a compact preview for convenience.
-    preview = [
-        {
-            "enrollment_id": e.get("id"),
-            "user_id": e.get("user_id"),
-            "section_id": e.get("course_section_id"),
-            "type": e.get("type"),
-            "enrollment_state": e.get("enrollment_state"),
-            "invitation_accepted": e.get("invitation_accepted"),
-            "user_name": (e.get("user") or {}).get("name"),
-        }
-        for e in enrollments[:10]
+    preview_columns = [
+        column
+        for column in [
+            "enrollment_id",
+            "user_id",
+            "course_section_id",
+            "type",
+            "enrollment_state",
+            "invitation_accepted",
+            "user_name",
+        ]
+        if column in enrollments_df.columns
     ]
-    print(json.dumps(preview, indent=2))
-    if len(enrollments) > 10:
-        print(f"... ({len(enrollments) - 10} more rows)")
+    preview_df = enrollments_df[preview_columns].head(10) if preview_columns else enrollments_df.head(10)
+    print(preview_df.to_json(orient="records", indent=2, default_handler=str))
+    if len(enrollments_df) > 10:
+        print(f"... ({len(enrollments_df) - 10} more rows)")
 
     return 0
 
