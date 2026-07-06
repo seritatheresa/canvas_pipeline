@@ -32,6 +32,7 @@ from pathlib import Path
 import config  # sets up root logging
 from valleyprod import ValleyPRODExtract
 from canvas_import import CanvasSISImporter
+from canvas_backfill import run_backfill
 from transform import write_csvs
 
 logger = logging.getLogger("pipeline")
@@ -65,6 +66,14 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--output-dir",
         default=config.OUTPUT_DIR,
         help=f"Directory for generated files (default: {config.OUTPUT_DIR})",
+    )
+    parser.add_argument(
+        "--skip-backfill",
+        action="store_true",
+        help="Skip the post-import tracking-table backfill (GAP-01). "
+             "Use only if you plan to run canvas_backfill.py manually — "
+             "until the backfill runs, the event broker will discard "
+             "enrollment events for this term's courses.",
     )
     return parser.parse_args(argv)
 
@@ -107,7 +116,7 @@ def main(argv=None) -> int:
     # ── Step 1: Extract from ValleyPROD ──────────────────────────────────────
     try:
         with ValleyPRODExtract() as valleyprod:
-            logger.info("Step 1/3 — Extracting from ValleyPROD …")
+            logger.info("Step 1/4 — Extracting from ValleyPROD …")
             students_df    = valleyprod.get_students(term)
             enrollments_df = valleyprod.get_enrollments(term)
             courses_df     = valleyprod.get_courses(term)
@@ -120,7 +129,7 @@ def main(argv=None) -> int:
         return 2
 
     # ── Step 2: Transform to Canvas CSVs ──────────────────────────────────────
-    logger.info("Step 2/3 — Building Canvas SIS CSV files …")
+    logger.info("Step 2/4 — Building Canvas SIS CSV files …")
 
     # Load existing Canvas courses for this term so we can skip re-importing them.
     canvas_courses_path = Path(args.output_dir) / f"canvas_courses_{term}.json"
@@ -185,7 +194,7 @@ def main(argv=None) -> int:
         return 0
 
     # ── Step 3: Upload to Canvas ──────────────────────────────────────────────
-    logger.info("Step 3/3 — Uploading to Canvas SIS Import API …")
+    logger.info("Step 3/4 — Uploading to Canvas SIS Import API …")
     try:
         importer = CanvasSISImporter()
         result   = importer.run(csv_files, term_code=term, dry_run=args.dry_run)
@@ -201,12 +210,37 @@ def main(argv=None) -> int:
         logger.info("Dry run complete in %.1f seconds.", elapsed)
         return 0
 
-    if state in ("imported", "imported_with_messages"):
-        logger.info("Pipeline SUCCEEDED in %.1f seconds. (state=%s)", elapsed, state)
-        return 0
-    else:
+    if state not in ("imported", "imported_with_messages"):
         logger.error("Pipeline FAILED in %.1f seconds. (state=%s)", elapsed, state)
         return 1
+
+    # ── Step 4: Backfill event-broker tracking tables (GAP-01) ────────────────
+    # Without this step the event broker treats every pipeline-provisioned
+    # section as untracked and silently discards enrollment events for it.
+    if args.skip_backfill:
+        logger.warning(
+            "--skip-backfill set — tracking tables NOT updated. "
+            "Run 'python canvas_backfill.py --term %s' before relying on "
+            "event-driven enrollment.", term,
+        )
+    else:
+        logger.info("Step 4/4 — Backfilling broker tracking tables …")
+        try:
+            stats = run_backfill(term)
+            logger.info("Backfill stats: %s", stats)
+        except Exception as exc:
+            # The import itself succeeded; report the backfill failure
+            # distinctly so the operator knows to re-run it standalone.
+            logger.error(
+                "Backfill FAILED (import was successful): %s. "
+                "Re-run manually: python canvas_backfill.py --term %s",
+                exc, term, exc_info=True,
+            )
+            return 1
+
+    elapsed = time.time() - start
+    logger.info("Pipeline SUCCEEDED in %.1f seconds. (state=%s)", elapsed, state)
+    return 0
 
 
 if __name__ == "__main__":
