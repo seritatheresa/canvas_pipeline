@@ -18,11 +18,14 @@ so the broker rejects legitimate EnrollStudent/DropStudent events as
   4. MERGEs rows into the tracking tables so re-runs are idempotent.
 
 Usage (standalone):
-    python canvas_backfill.py --term 202620
-    python canvas_backfill.py --term 202620 --dry-run
+    python canvas_backfill.py --term 202620            # dry-run (default)
+    python canvas_backfill.py --term 202620 --live     # write to Oracle
 
-Or from pipeline.py, which calls run_backfill() automatically after a
-successful import.
+SAFETY DEFAULT: until the integration is in production (GAP-16 resolved),
+every invocation runs as a dry-run unless explicitly overridden — either
+per-run with --live, or permanently by setting BACKFILL_LIVE=true in .env
+once the tracking tables exist in ValleyPROD. This applies to pipeline.py's
+automatic Step 4 as well.
 
 Configuration comes from .env via config.py (CANVAS_URL, CANVAS_TOKEN,
 VALLEYPROD_* Oracle credentials).
@@ -31,6 +34,7 @@ VALLEYPROD_* Oracle credentials).
 import argparse
 import json
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -42,7 +46,10 @@ import config
 
 logger = logging.getLogger(__name__)
 
-TRACKING_SCHEMA = "ETSIS"
+# Owner of the CANVASLMS_* tracking tables. 'ETSIS' is the schema name the
+# broker inherited from Foothill-De Anza; at MVSU the tables may live under
+# a different owner. Override with TRACKING_SCHEMA in .env.
+TRACKING_SCHEMA = os.environ.get("TRACKING_SCHEMA", "ETSIS").upper()
 SECTIONS_TABLE = "CANVASLMS_SECTIONS"
 ENROLLMENTS_TABLE = "CANVASLMS_ENROLLMENTS"
 
@@ -174,6 +181,46 @@ def _table_columns(cursor, table_name):
     return {row[0] for row in cursor.fetchall()}
 
 
+def _assert_tracking_tables(cursor):
+    """Fail fast, with actionable guidance, if the tracking tables are not
+    visible to the connected user (otherwise the MERGEs die with a bare
+    ORA-00942). Zero rows in all_tab_columns means the table either does
+    not exist under TRACKING_SCHEMA or the user has no grants on it."""
+    missing = [
+        t for t in (SECTIONS_TABLE, ENROLLMENTS_TABLE)
+        if not _table_columns(cursor, t)
+    ]
+    if not missing:
+        return
+
+    # Discovery: where (if anywhere) do CANVASLMS tables actually live?
+    cursor.execute(
+        "SELECT owner, table_name FROM all_tables "
+        "WHERE table_name LIKE 'CANVASLMS%' ORDER BY owner, table_name"
+    )
+    found = cursor.fetchall()
+    if found:
+        located = ", ".join(f"{o}.{t}" for o, t in found)
+        hint = (
+            f"Visible CANVASLMS tables: {located}. If the owner differs from "
+            f"'{TRACKING_SCHEMA}', set TRACKING_SCHEMA=<owner> in .env. If the "
+            f"owner is correct, ask your DBA for SELECT/INSERT/UPDATE grants."
+        )
+    else:
+        hint = (
+            "No CANVASLMS tables are visible to this user at all. The "
+            "broker's database objects may never have been installed in "
+            "ValleyPROD — run canvas-event-broker/src/schema/"
+            "InstallDbObjects.sql in the target schema (this also creates "
+            "CANVASLMS_EVENTS and its triggers, which the event broker "
+            "requires), then grant access to this user."
+        )
+    raise RuntimeError(
+        f"Tracking table(s) not accessible as {TRACKING_SCHEMA}."
+        f"{' / '.join(missing)}. {hint}"
+    )
+
+
 def resolve_pidms(cursor, campus_ids):
     """Map Banner campus IDs (Canvas sis_user_id) to PIDMs via SPRIDEN.
 
@@ -247,14 +294,27 @@ _MERGE_ENROLLMENT_SQL = f"""
 
 # ── Main backfill routine ─────────────────────────────────────────────────────
 
-def run_backfill(term_code, dry_run=False):
+def run_backfill(term_code, dry_run=None):
     """Backfill CANVASLMS_SECTIONS and CANVASLMS_ENROLLMENTS for a term.
+
+    dry_run semantics:
+        True  — never write to Oracle
+        False — write (explicit caller override, e.g. --live)
+        None  — decide from environment: live only if BACKFILL_LIVE=true.
+                Until the integration is in production this means dry-run.
 
     Returns a stats dict:
         {sections, enrollments, skipped_sections, unresolved_users}
     Raises on connection/API errors so callers can treat failure distinctly
     from an import failure.
     """
+    if dry_run is None:
+        dry_run = os.environ.get("BACKFILL_LIVE", "").lower() != "true"
+        if dry_run:
+            logger.info(
+                "Backfill defaulting to DRY RUN (pre-production safety). "
+                "Set BACKFILL_LIVE=true in .env or pass --live to write."
+            )
     stats = {
         "sections": 0,
         "enrollments": 0,
@@ -335,6 +395,9 @@ def run_backfill(term_code, dry_run=False):
     try:
         cursor = conn.cursor()
 
+        # Fail fast if the tracking tables aren't visible (schema/grants)
+        _assert_tracking_tables(cursor)
+
         # Adapt to the deployed CANVASLMS_SECTIONS shape (see _merge_section_sql)
         section_columns = _table_columns(cursor, SECTIONS_TABLE)
         has_sis_columns = {"SIS_COURSE_ID", "SIS_SECTION_ID"} <= section_columns
@@ -394,12 +457,20 @@ def main(argv=None):
     )
     parser.add_argument("--term", "-t", required=True,
                         help="Banner term code, e.g. 202620")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Fetch and report counts, but write nothing to Oracle.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true",
+                      help="Fetch and report counts, but write nothing to Oracle "
+                           "(this is already the default until BACKFILL_LIVE=true).")
+    mode.add_argument("--live", action="store_true",
+                      help="Write to the tracking tables, overriding the "
+                           "pre-production dry-run default for this run.")
     args = parser.parse_args(argv)
 
+    # --dry-run → True, --live → False, neither → None (env decides)
+    dry_run = True if args.dry_run else (False if args.live else None)
+
     try:
-        stats = run_backfill(args.term.strip(), dry_run=args.dry_run)
+        stats = run_backfill(args.term.strip(), dry_run=dry_run)
     except Exception as exc:
         logger.error("Backfill failed: %s", exc, exc_info=True)
         return 1

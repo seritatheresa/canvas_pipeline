@@ -93,6 +93,12 @@ class CanvasSISImporter:
         logger.info("Resolved banner term %s → Canvas term id %s", term_code, canvas_term_id)
         logger.info("Upload mode: %s", "batch" if use_batch_mode else "standard")
 
+        # Batch mode deletes any enrollment in the term that is missing from
+        # this file — a truncated Banner extract could mass-drop students.
+        # Refuse to proceed if the dataset shrank suspiciously vs the last run.
+        if use_batch_mode and not dry_run:
+            self._check_batch_safety(csv_files, term_code)
+
         if dry_run:
             logger.info("[DRY RUN] Would upload %s to Canvas — skipping.", zip_path)
             return {
@@ -106,6 +112,11 @@ class CanvasSISImporter:
         import_id = self._submit(zip_path, canvas_term_id, use_batch_mode)
         result = self._poll(import_id)
         self._log_result(result)
+
+        # Record row counts for the next run's batch-mode safety check
+        if result.get("workflow_state") in ("imported", "imported_with_messages"):
+            self._save_batch_stats(csv_files, term_code)
+
         return result
 
     @staticmethod
@@ -117,6 +128,85 @@ class CanvasSISImporter:
         DataFrames were empty and intentionally not written.
         """
         return "courses.csv" not in csv_files and "sections.csv" not in csv_files
+
+    # ── Batch-mode safety guard ───────────────────────────────────────────────
+
+    # Abort a batch-mode upload if enrollments.csv shrank more than this
+    # fraction versus the last successful import. Override the threshold with
+    # BATCH_MODE_MAX_SHRINK_PCT (0–100) or bypass entirely for one run with
+    # BATCH_MODE_FORCE=true (e.g. after finals, when mass drops are real).
+    _DEFAULT_MAX_SHRINK_PCT = 20.0
+
+    @staticmethod
+    def _csv_row_count(path: Path) -> int:
+        """Data rows in a CSV (excludes the header line)."""
+        with open(path, encoding="utf-8") as fh:
+            return max(sum(1 for _ in fh) - 1, 0)
+
+    @staticmethod
+    def _stats_path(term_code: str) -> Path:
+        return Path(config.OUTPUT_DIR) / term_code / "batch_guard.json"
+
+    def _check_batch_safety(self, csv_files: dict[str, Path], term_code: str) -> None:
+        """Raise RuntimeError instead of letting a suspicious batch import run."""
+        import os
+
+        if os.environ.get("BATCH_MODE_FORCE", "").lower() == "true":
+            logger.warning("BATCH_MODE_FORCE=true — batch-mode safety check bypassed.")
+            return
+
+        enrollments = csv_files.get("enrollments.csv")
+        if enrollments is None:
+            raise RuntimeError(
+                "Batch-mode import with no enrollments.csv would delete every "
+                "enrollment in the term. Aborting. If this is intentional, set "
+                "BATCH_MODE_FORCE=true for this run."
+            )
+
+        current = self._csv_row_count(enrollments)
+        stats_path = self._stats_path(term_code)
+        if not stats_path.exists():
+            logger.info(
+                "No previous batch stats at %s — first batch run for this "
+                "term, skipping shrink check (%d enrollment rows).",
+                stats_path, current,
+            )
+            return
+
+        with open(stats_path, encoding="utf-8") as fh:
+            previous = json.load(fh).get("enrollment_rows", 0)
+
+        threshold = float(
+            os.environ.get("BATCH_MODE_MAX_SHRINK_PCT", self._DEFAULT_MAX_SHRINK_PCT)
+        )
+        if previous > 0:
+            shrink_pct = (previous - current) / previous * 100
+            if shrink_pct > threshold:
+                raise RuntimeError(
+                    f"Batch-mode safety check failed: enrollments.csv has "
+                    f"{current} rows vs {previous} in the last successful "
+                    f"import ({shrink_pct:.1f}% shrink > {threshold:.0f}% "
+                    f"threshold). A truncated Banner extract would mass-drop "
+                    f"students in Canvas. Verify the extract; if the shrink "
+                    f"is legitimate, re-run with BATCH_MODE_FORCE=true."
+                )
+        logger.info(
+            "Batch-mode safety check passed: %d rows now vs %d previously.",
+            current, previous,
+        )
+
+    def _save_batch_stats(self, csv_files: dict[str, Path], term_code: str) -> None:
+        enrollments = csv_files.get("enrollments.csv")
+        if enrollments is None:
+            return
+        stats_path = self._stats_path(term_code)
+        stats_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(stats_path, "w", encoding="utf-8") as fh:
+            json.dump({
+                "enrollment_rows": self._csv_row_count(enrollments),
+                "term": term_code,
+            }, fh)
+        logger.debug("Saved batch guard stats to %s", stats_path)
 
     # ── ZIP builder ───────────────────────────────────────────────────────────
 
