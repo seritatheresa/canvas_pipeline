@@ -44,7 +44,7 @@ SELECT DISTINCT
         'ED',  'ED',   'SE',  'ED',   'RD',  'ED',   'EC',  'ED',
         'MJ',  'MC',   'SP',  'MC',   'MC',  'MC',
         'HI',  'SS',   'SO',  'SS',   'SS',  'SS',   'PS',  'SS',
-                       'PA',  'SS',   'RP',  'SS',
+                       'PA',  'SS',   'RP',  'SS',   'PL',  'SS',
         'CJ',  'CJ',
         'RU',  'EN',   'AB',  'EN',   'HD',  'EN',   'SA',  'EN',
                'SK',   'UC',
