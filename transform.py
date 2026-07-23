@@ -36,8 +36,8 @@ def _clean_name(value) -> str:
 def _make_login_id(email: str, student_id: str) -> str:
     """
     Return the university (MVSU) email as the Canvas login_id.
-    The SQL query guarantees the email is already an @mvsu.edu address
-    (or a constructed lower(first_name).lower(last_name)@mvsu.edu fallback).
+    The SQL query always constructs this as
+    lower(first_initial)+lower(last_name, hyphens removed)+"1"@students.mvsu.edu.
     Falls back to student_id only when no email is present.
     """
     if email:

@@ -41,7 +41,7 @@ output/canvas_*.json
 
 | File | Notable fields |
 |------|---------------|
-| `users.csv` | `user_id`, `login_id`, `first_name`, `last_name`, `email`, `status`, `integration_id` (PIDM). `login_id` and `email` are always the student's university MVSU email. If no `@mvsu.edu` address exists in Banner, one is constructed as `lower(first_name).lower(last_name)@mvsu.edu`. |
+| `users.csv` | `user_id`, `login_id`, `first_name`, `last_name`, `email`, `status`, `integration_id` (PIDM). `login_id` and `email` are always constructed as `lower(first_initial)+lower(last_name, hyphens removed)+"1"@students.mvsu.edu` (e.g. Aaliyah Taylor → `ataylor1@students.mvsu.edu`; Mary Smith-Jones → `msmithjones1@students.mvsu.edu`). Banner email addresses are not used. |
 | `courses.csv` | `course_id`, `short_name`, `long_name`, `account_id`, `term_id`, `status`, `integration_id` (TERM+CRN), `course_format` |
 | `sections.csv` | `section_id`, `course_id`, `name`, `status`, `start_date`, `end_date`, `integration_id` |
 | `enrollments.csv` | `course_id`, `user_id`, `role`, `section_id`, `status` |
