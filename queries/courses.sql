@@ -47,6 +47,7 @@ SELECT DISTINCT
                        'PA',  'SS',   'RP',  'SS',   'PL',  'SS',
         'CJ',  'CJ',
         'RU',  'EN',   'AB',  'EN',   'HD',  'EN',   'SA',  'EN',
+        'FR',  'EN',
                'SK',   'UC',
         'EH',  'NSEH', 'MA',  'MCIS', 'CS',  'MCIS',
         'RE',  'HPER', 'PE',  'HPER', 'HL',  'HPER', 'PED', 'HPER',
@@ -78,14 +79,11 @@ SELECT DISTINCT
         'DE9', 'blended','DE10','blended',
         'on_campus')                                    AS format,
 
-    -- Section dates (UTC → ISO-8601)
-    -- start_date: use date from Banner with time fixed at 08:00:00 UTC
+    -- Section dates (UTC → ISO-8601); fixed times avoid DST shifts across terms
     TO_CHAR(TRUNC(ssbsect.ssbsect_ptrm_start_date), 'YYYY-MM-DD') || 'T08:00:00Z'
                                                         AS start_date,
-    TO_CHAR(
-        CAST(ssbsect.ssbsect_ptrm_end_date AS TIMESTAMP) AT TIME ZONE 'UTC',
-        'YYYY-MM-DD"T"HH24:MI:SS"Z"'
-    )                                                   AS end_date
+    TO_CHAR(TRUNC(ssbsect.ssbsect_ptrm_end_date),   'YYYY-MM-DD') || 'T23:59:00Z'
+                                                        AS end_date
 
 FROM saturn.ssbsect ssbsect
 JOIN saturn.scbcrse scbcrse
