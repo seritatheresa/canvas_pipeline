@@ -3,11 +3,9 @@
 --
 -- Bind variable:  :term_code  (e.g. '202620')
 --
--- Email: always constructed as
---   lower(first_initial)+lower(last_name, hyphens removed)+"1"@students.mvsu.edu
---
--- Banner email addresses (preferred/most-recent) are not used for
--- login_id or email.
+-- Email: constructed as lower(first_name).lower(last_name)@mvsu.edu,
+-- with any character that isn't a letter (spaces, apostrophes, hyphens,
+-- etc.) stripped from each name first.
 --
 -- Replaces the per-term student files:
 --   202530_students.sql, 202610_students.sql, 202620_students.sql, etc.
@@ -19,10 +17,10 @@ SELECT DISTINCT
     spriden.spriden_first_name                                  AS first_name,
     spriden.spriden_mi                                          AS middle_name,
     spriden.spriden_last_name                                   AS last_name,
-    LOWER(SUBSTR(spriden.spriden_first_name, 1, 1))
-        || LOWER(REPLACE(spriden.spriden_last_name, '-', ''))
-        || '1'
-        || '@students.mvsu.edu'                                 AS email,
+    LOWER(REGEXP_REPLACE(spriden.spriden_first_name, '[^A-Za-z]', ''))
+        || '.'
+        || LOWER(REGEXP_REPLACE(spriden.spriden_last_name, '[^A-Za-z]', ''))
+        || '@mvsu.edu'                                          AS email,
     CASE
         WHEN SUM(sfrstcr.sfrstcr_credit_hr)
              OVER (PARTITION BY sfrstcr.sfrstcr_pidm,

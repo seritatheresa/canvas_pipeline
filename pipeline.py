@@ -9,7 +9,8 @@ Usage:
 
 The script:
   1. Reads credentials from .env (via config.py)
-  2. Connects to ValleyPROD Oracle and runs the three parameterized queries
+  2. Connects to ValleyPROD Oracle and runs the four parameterized queries
+     (students, faculty, enrollments, courses)
   3. Transforms the results into Canvas SIS CSV files
   4. Zips and uploads to Canvas SIS Import API
   5. Polls until the import finishes and logs the outcome
@@ -118,6 +119,7 @@ def main(argv=None) -> int:
         with ValleyPRODExtract() as valleyprod:
             logger.info("Step 1/4 — Extracting from ValleyPROD …")
             students_df    = valleyprod.get_students(term)
+            faculty_df     = valleyprod.get_faculty(term)
             enrollments_df = valleyprod.get_enrollments(term)
             courses_df     = valleyprod.get_courses(term)
     except Exception as exc:
@@ -127,6 +129,14 @@ def main(argv=None) -> int:
     if students_df.empty:
         logger.error("No students found for term %s. Aborting.", term)
         return 2
+
+    if faculty_df.empty:
+        # Not fatal — the students still import — but every teacher
+        # enrollment for the term will be rejected, so say so loudly.
+        logger.warning(
+            "No faculty found for term %s. Teacher enrollments will fail unless "
+            "those instructors are already in Canvas.", term,
+        )
 
     # ── Step 2: Transform to Canvas CSVs ──────────────────────────────────────
     logger.info("Step 2/4 — Building Canvas SIS CSV files …")
@@ -173,6 +183,7 @@ def main(argv=None) -> int:
     try:
         csv_files = write_csvs(
             students_df=students_df,
+            faculty_df=faculty_df,
             enrollments_df=enrollments_df,
             courses_df=courses_df,
             output_dir=args.output_dir,

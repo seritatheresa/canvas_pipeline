@@ -25,9 +25,10 @@ output/canvas_*.json
    - `canvas_courses.py <term>` — fetches existing courses for a term → `output/canvas_courses_<term>.json`
    - `canvas_users.py` — fetches all existing users → `output/canvas_users.json`
 2. Connects to ValleyPROD Oracle using `python-oracledb` (thin mode — no Oracle Client required).
-3. Runs three parameterized SQL queries for the given term code.
+3. Runs four parameterized SQL queries for the given term code (students, faculty, enrollments, courses).
 4. Transforms results into Canvas SIS CSV format.  Records already present in Canvas are automatically excluded:
-   - `users.csv` — skips users whose SIS ID is already in `canvas_users.json`
+   - `users.csv` — students **and** faculty for the term, skipping anyone whose SIS ID is already in
+     `canvas_users.json`, so the file contains only people new to Canvas
    - `courses.csv` — skips courses whose SIS course ID is already in `canvas_courses_<term>.json`
    - `sections.csv` — sections for new courses only (mirrors `courses.csv` filtering)
    - `enrollments.csv` — all enrollments for the term
@@ -41,7 +42,7 @@ output/canvas_*.json
 
 | File | Notable fields |
 |------|---------------|
-| `users.csv` | `user_id`, `login_id`, `first_name`, `last_name`, `email`, `status`, `integration_id` (PIDM). `login_id` and `email` are always constructed as `lower(first_initial)+lower(last_name, hyphens removed)+"1"@students.mvsu.edu` (e.g. Aaliyah Taylor → `ataylor1@students.mvsu.edu`; Mary Smith-Jones → `msmithjones1@students.mvsu.edu`). Banner email addresses are not used. |
+| `users.csv` | `user_id`, `login_id`, `first_name`, `last_name`, `email`, `status`, `integration_id` (PIDM). Covers **both students and faculty** — students from `students.sql`, instructors from `faculty.sql`; anyone holding both roles is written once, from their student record. `login_id` and `email` are always constructed as `lower(first_name)+"."+lower(last_name)+"@mvsu.edu"`, with non-letter characters stripped from each name first (e.g. Aaliyah Taylor → `aaliyah.taylor@mvsu.edu`; Mary Smith-Jones → `mary.smithjones@mvsu.edu`). Banner email addresses are not used. |
 | `courses.csv` | `course_id`, `short_name`, `long_name`, `account_id`, `term_id`, `status`, `integration_id` (TERM+CRN), `course_format` |
 | `sections.csv` | `section_id`, `course_id`, `name`, `status`, `start_date`, `end_date`, `integration_id` |
 | `enrollments.csv` | `course_id`, `user_id`, `role`, `section_id`, `status` |
@@ -175,6 +176,7 @@ canvas_pipeline/
 ├── requirements.txt     # Python dependencies
 ├── queries/
 │   ├── students.sql     # Returns students for a term
+│   ├── faculty.sql      # Returns instructors assigned to a section for a term
 │   ├── enrollments.sql  # Returns student + faculty enrollments
 │   └── courses.sql      # Returns course sections (includes integration_id, course_format)
 └── output/

@@ -49,7 +49,7 @@ SELECT DISTINCT
         'RU',  'EN',   'AB',  'EN',   'HD',  'EN',   'SA',  'EN',
         'FR',  'EN',
                'SK',   'UC',
-        'EH',  'NSEH', 'MA',  'MCIS', 'CS',  'MCIS',
+        'EH',  'NSEH', 'MA',  'MCIS', 'CS',  'MCIS', 'AIM', 'MCIS',
         'RE',  'HPER', 'PE',  'HPER', 'HL',  'HPER', 'PED', 'HPER',
         'BF',  'NSEH', 'BI',  'NSEH', 'PH',  'NSEH', 'CH',  'NSEH',
                'SC',   'NSEH',

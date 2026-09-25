@@ -10,6 +10,7 @@ Usage:
     from valleyprod import ValleyPRODExtract
     with ValleyPRODExtract() as vp:
         students    = vp.get_students("202620")
+        faculty     = vp.get_faculty("202620")
         enrollments = vp.get_enrollments("202620")
         courses     = vp.get_courses("202620")
 """
@@ -101,6 +102,17 @@ class ValleyPRODExtract:
                  last_name, email, ft_pt_status
         """
         return self._query("students.sql", term_code)
+
+    def get_faculty(self, term_code):
+        """
+        Return instructors assigned to a section in the term.
+        Columns: integration_id, term_code, user_id, first_name,
+                 middle_name, last_name, email
+
+        Same SIRASGN/SSBSECT source as the 'teacher' half of
+        enrollments.sql, so every teacher enrollment has a person record.
+        """
+        return self._query("faculty.sql", term_code)
 
     def get_enrollments(self, term_code):
         """
